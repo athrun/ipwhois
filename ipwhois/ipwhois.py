@@ -44,6 +44,8 @@ import dns.resolver
 import re
 import copy
 import json
+import logging
+import random
 from .utils import ipv4_is_defined, ipv6_is_defined, unique_everseen
 
 try:
@@ -346,6 +348,9 @@ class IPWhois:
         # Default timeout for socket connections.
         self.timeout = timeout
 
+        # Counter for exponential backoff strategy
+        self.backoff_count = 0
+
         # Proxy opener.
         if isinstance(proxy_opener, OpenerDirector):
 
@@ -630,15 +635,21 @@ class IPWhois:
             conn.close()
 
             if 'Query rate limit exceeded' in response:
-
-                sleep(1)
+                logging.warning("ipwhois[{}]: Query rate limit exceeded!".format(self.address_str))
+                self.backoff_count += 1
+                # Implement Full Jitter Backoff strategy
+                # as described here: http://www.awsarchitectureblog.com/2015/03/backoff.html
+                wait_period = random.randrange(0, min(3600, 2 ** self.backoff_count))
+                logging.warning("ipwhois[{}]: Retrying in [{}] second(s)!".format(self.address_str, wait_period))
+                sleep(wait_period)
                 return self.get_whois(asn_registry, retry_count, server, port,
                                       extra_blacklist)
 
             elif 'error 501' in response or 'error 230' in response:
-
+                self.backoff_count = 0 # reset backoff count
                 raise ValueError
 
+            self.backoff_count = 0 # reset backoff count
             return str(response)
 
         except (socket.timeout, socket.error):
